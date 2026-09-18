@@ -1,114 +1,41 @@
 #!/usr/bin/env bash
-# Pearl (PRL) on Kryptex Pool — Vast.ai launcher for one RTX 4070 Super.
-# Run: bash start_prl_kryptex_rtx4070s.sh
-# Stop: Ctrl+C. No clocks, power limits, or fan settings are changed.
-
+# PeakMiner PRL launcher for the NVIDIA GPUs visible in this Vast.ai instance.
 set -Eeuo pipefail
-
 KRYPTEX_ACCOUNT="${KRYPTEX_ACCOUNT:-krxXKZVJJ6}"
-WORKER_NAME="${WORKER_NAME:-vast-rtx4070s-$(date +%m%d-%H%M)}"
+WORKER_NAME="${WORKER_NAME:-vast4070s01}"
 POOL="${POOL:-prl.kryptex.network:8048}"
-BASE_DIR="${BASE_DIR:-$HOME/prl-srbminer}"
-
-need() { command -v "$1" >/dev/null 2>&1 || { echo "Missing required command: $1" >&2; exit 1; }; }
-need curl
-need python3
-need tar
-need sha256sum
-need md5sum
-need nvidia-smi
-need grep
-
-gpu_names="$(nvidia-smi --query-gpu=name --format=csv,noheader)"
-if ! grep -qi 'RTX 4070 SUPER' <<<"$gpu_names"; then
-  echo "This script is intentionally limited to RTX 4070 Super." >&2
-  echo "Detected GPU(s): $gpu_names" >&2
-  exit 1
-fi
-
-echo "== GPU =="
+BASE_DIR="${BASE_DIR:-$HOME/prl-peakminer}"
+VERSION=2.16.3
+SHA256=a697538aec3cae7100204d168e5a2ca147da7b322b284a14c66b3484c8df99f4
+URL="https://github.com/peakminer/peakminer/releases/download/v$VERSION/peakminer-$VERSION-linux-x86_64"
+for tool in curl sha256sum nvidia-smi tee mktemp; do
+  command -v "$tool" >/dev/null || { echo "Missing command: $tool" >&2; exit 1; }
+done
+[[ "$(uname -s)" == Linux && "$(uname -m)" == x86_64 ]] || { echo 'Requires Linux x86_64.' >&2; exit 1; }
+echo '== GPU =='
 nvidia-smi --query-gpu=name,driver_version,memory.total,power.limit --format=csv,noheader
-
-mkdir -p "$BASE_DIR/releases" "$BASE_DIR/logs"
-cd "$BASE_DIR"
-
-echo "== Resolving official SRBMiner-MULTI release =="
-release_json="$(curl --fail --location --silent --show-error --retry 3 \
-  https://api.github.com/repos/doktor83/SRBMiner-Multi/releases/latest)"
-
-readarray -t release_info < <(printf '%s' "$release_json" | python3 -c '
-import json, re, sys
-r = json.load(sys.stdin)
-assets = r.get("assets", [])
-matches = [a for a in assets if re.fullmatch(r"SRBMiner-Multi-.*-Linux\.tar\.(?:gz|xz)", a.get("name", ""), re.I)]
-if not matches:
-    raise SystemExit("No Linux archive was found in the latest SRBMiner-MULTI release.")
-a = matches[0]
-body = r.get("body") or ""
-md5 = re.search(r"\\b([a-fA-F0-9]{32})\\s+\\*" + re.escape(a["name"]), body)
-print(r.get("tag_name", "unknown"))
-print(a["browser_download_url"])
-print(a.get("digest") or "")
-print(md5.group(1).lower() if md5 else "")
-')
-
-if (( ${#release_info[@]} < 4 )); then
-  echo "Could not read the latest SRBMiner-MULTI release metadata." >&2
-  exit 1
+mkdir -p "$BASE_DIR/bin" "$BASE_DIR/logs"
+BASE_DIR="$(cd "$BASE_DIR" && pwd)"
+MINER="$BASE_DIR/bin/peakminer-$VERSION"
+download_tmp=''
+trap 'if [[ -n "$download_tmp" ]]; then rm -f -- "$download_tmp"; fi' EXIT
+verify() { printf '%s  %s\n' "$SHA256" "$1" | sha256sum --check --status; }
+if [[ ! -f "$MINER" ]] || ! verify "$MINER"; then
+  download_tmp="$(mktemp "$BASE_DIR/bin/download.XXXXXX")"
+  curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 --connect-timeout 30 --output "$download_tmp" "$URL"
+  verify "$download_tmp" || { echo 'SHA-256 mismatch. Download will not be executed.' >&2; exit 1; }
+  chmod 755 "$download_tmp"
+  mv -- "$download_tmp" "$MINER"
+  download_tmp=''
 fi
-release_tag="${release_info[0]}"
-asset_url="${release_info[1]}"
-asset_digest="${release_info[2]}"
-expected_md5="${release_info[3]}"
-archive_ext="${asset_url##*.tar.}"
-archive="$BASE_DIR/releases/srbminer-${release_tag}-linux.tar.${archive_ext}"
-extract_dir="$BASE_DIR/releases/srbminer-${release_tag}-bundle"
-
-if [[ ! -f "$archive" ]]; then
-  curl --fail --location --show-error --retry 3 --output "$archive.part" "$asset_url"
-  mv "$archive.part" "$archive"
-fi
-
-if [[ "$asset_digest" == sha256:* ]]; then
-  [[ "$(sha256sum "$archive" | awk '{print $1}')" == "${asset_digest#sha256:}" ]] || {
-    echo "SHA-256 verification failed; refusing to run." >&2; exit 1;
-  }
-  echo "Release ${release_tag}: SHA-256 verified."
-elif [[ -n "$expected_md5" ]]; then
-  [[ "$(md5sum "$archive" | awk '{print $1}')" == "$expected_md5" ]] || {
-    echo "MD5 verification failed; refusing to run." >&2; exit 1;
-  }
-  echo "Release ${release_tag}: release MD5 verified."
-else
-  echo "Warning: no published checksum was detected; downloaded only from the official SRBMiner release."
-fi
-
-MINER="$(find "$extract_dir" -type f -name SRBMiner-MULTI -perm -u+x -print -quit 2>/dev/null || true)"
-if [[ -z "$MINER" ]]; then
-  rm -rf "$extract_dir"
-  mkdir -p "$extract_dir"
-  tar -xf "$archive" -C "$extract_dir"
-  MINER="$(find "$extract_dir" -type f -name SRBMiner-MULTI -print -quit)"
-  [[ -n "$MINER" ]] || { echo "SRBMiner-MULTI was not present in the archive." >&2; exit 1; }
-  chmod +x "$MINER"
-fi
-
-MINER_DIR="$(dirname "$MINER")"
-log_file="$BASE_DIR/logs/prl-$(date +%Y%m%d-%H%M%S).log"
-
-echo "== Starting PRL mining =="
-echo "Pool:    $POOL"
-echo "Account: $KRYPTEX_ACCOUNT"
-echo "Worker:  $WORKER_NAME"
-echo "Log:     $log_file"
-
-(
-  cd "$MINER_DIR"
-  ./SRBMiner-MULTI \
-    --disable-cpu \
-    --algorithm pearlhash \
-    --pool "$POOL" \
-    --wallet "$KRYPTEX_ACCOUNT" \
-    --worker "$WORKER_NAME" \
-    --tls true
-) 2>&1 | tee -a "$log_file"
+chmod u+x "$MINER"
+log_file="$BASE_DIR/logs/prl-$(date +%Y%m%d-%H%M%S)-$$.log"
+printf 'PeakMiner %s: SHA-256 verified.\nPool: %s\nAccount: %s\nWorker: %s\nLog: %s\n' "$VERSION" "$POOL" "$KRYPTEX_ACCOUNT" "$WORKER_NAME" "$log_file"
+cd "$BASE_DIR/bin"
+set +e
+"$MINER" --coin pearl -o "$POOL" -u "$KRYPTEX_ACCOUNT/$WORKER_NAME" 2>&1 | tee -a "$log_file"
+result=("${PIPESTATUS[@]}")
+set -e
+printf 'PeakMiner exited: code %s. Log: %s\n' "${result[0]}" "$log_file" >&2
+if (( result[0] != 0 )); then exit "${result[0]}"; fi
+exit "${result[1]}"
