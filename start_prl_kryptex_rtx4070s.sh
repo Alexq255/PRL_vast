@@ -62,7 +62,7 @@ asset_digest="${release_info[2]}"
 expected_md5="${release_info[3]}"
 archive_ext="${asset_url##*.tar.}"
 archive="$BASE_DIR/releases/srbminer-${release_tag}-linux.tar.${archive_ext}"
-extract_dir="$BASE_DIR/releases/srbminer-${release_tag}"
+extract_dir="$BASE_DIR/releases/srbminer-${release_tag}-bundle"
 
 if [[ ! -f "$archive" ]]; then
   curl --fail --location --show-error --retry 3 --output "$archive.part" "$asset_url"
@@ -83,19 +83,17 @@ else
   echo "Warning: no published checksum was detected; downloaded only from the official SRBMiner release."
 fi
 
-if [[ ! -x "$extract_dir/SRBMiner-MULTI" ]]; then
+MINER="$(find "$extract_dir" -type f -name SRBMiner-MULTI -perm -u+x -print -quit 2>/dev/null || true)"
+if [[ -z "$MINER" ]]; then
   rm -rf "$extract_dir"
   mkdir -p "$extract_dir"
   tar -xf "$archive" -C "$extract_dir"
-  miner_path="$(find "$extract_dir" -type f -name SRBMiner-MULTI -print -quit)"
-  [[ -n "$miner_path" ]] || { echo "SRBMiner-MULTI was not present in the archive." >&2; exit 1; }
-  chmod +x "$miner_path"
-  if [[ "$miner_path" != "$extract_dir/SRBMiner-MULTI" ]]; then
-    mv "$miner_path" "$extract_dir/SRBMiner-MULTI"
-  fi
+  MINER="$(find "$extract_dir" -type f -name SRBMiner-MULTI -print -quit)"
+  [[ -n "$MINER" ]] || { echo "SRBMiner-MULTI was not present in the archive." >&2; exit 1; }
+  chmod +x "$MINER"
 fi
 
-MINER="$extract_dir/SRBMiner-MULTI"
+MINER_DIR="$(dirname "$MINER")"
 log_file="$BASE_DIR/logs/prl-$(date +%Y%m%d-%H%M%S).log"
 
 echo "== Starting PRL mining =="
@@ -104,11 +102,13 @@ echo "Account: $KRYPTEX_ACCOUNT"
 echo "Worker:  $WORKER_NAME"
 echo "Log:     $log_file"
 
-"$MINER" \
-  --disable-cpu \
-  --algorithm pearlhash \
-  --pool "$POOL" \
-  --wallet "$KRYPTEX_ACCOUNT" \
-  --worker "$WORKER_NAME" \
-  --tls true \
-  2>&1 | tee -a "$log_file"
+(
+  cd "$MINER_DIR"
+  ./SRBMiner-MULTI \
+    --disable-cpu \
+    --algorithm pearlhash \
+    --pool "$POOL" \
+    --wallet "$KRYPTEX_ACCOUNT" \
+    --worker "$WORKER_NAME" \
+    --tls true
+) 2>&1 | tee -a "$log_file"
