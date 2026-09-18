@@ -40,7 +40,7 @@ readarray -t release_info < <(printf '%s' "$release_json" | python3 -c '
 import json, re, sys
 r = json.load(sys.stdin)
 assets = r.get("assets", [])
-matches = [a for a in assets if re.fullmatch(r"SRBMiner-Multi-.*-Linux\\.tar\\.gz", a.get("name", ""), re.I)]
+matches = [a for a in assets if re.fullmatch(r"SRBMiner-Multi-.*-Linux\\.tar\\.(?:gz|xz)", a.get("name", ""), re.I)]
 if not matches:
     raise SystemExit("No Linux tar.gz asset was found in the latest SRBMiner-MULTI release.")
 a = matches[0]
@@ -52,11 +52,16 @@ print(a.get("digest") or "")
 print(md5.group(1).lower() if md5 else "")
 ')
 
+if (( ${#release_info[@]} < 4 )); then
+  echo "Could not read the latest SRBMiner-MULTI release metadata." >&2
+  exit 1
+fi
 release_tag="${release_info[0]}"
 asset_url="${release_info[1]}"
-asset_digest="${release_info[2]:-}"
-expected_md5="${release_info[3]:-}"
-archive="$BASE_DIR/releases/srbminer-${release_tag}-linux.tar.gz"
+asset_digest="${release_info[2]}"
+expected_md5="${release_info[3]}"
+archive_ext="${asset_url##*.tar.}"
+archive="$BASE_DIR/releases/srbminer-${release_tag}-linux.tar.${archive_ext}"
 extract_dir="$BASE_DIR/releases/srbminer-${release_tag}"
 
 if [[ ! -f "$archive" ]]; then
@@ -81,7 +86,7 @@ fi
 if [[ ! -x "$extract_dir/SRBMiner-MULTI" ]]; then
   rm -rf "$extract_dir"
   mkdir -p "$extract_dir"
-  tar -xzf "$archive" -C "$extract_dir"
+  tar -xf "$archive" -C "$extract_dir"
   miner_path="$(find "$extract_dir" -type f -name SRBMiner-MULTI -print -quit)"
   [[ -n "$miner_path" ]] || { echo "SRBMiner-MULTI was not present in the archive." >&2; exit 1; }
   chmod +x "$miner_path"
