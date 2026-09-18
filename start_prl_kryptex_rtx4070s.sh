@@ -40,9 +40,9 @@ readarray -t release_info < <(printf '%s' "$release_json" | python3 -c '
 import json, re, sys
 r = json.load(sys.stdin)
 assets = r.get("assets", [])
-matches = [a for a in assets if re.fullmatch(r"SRBMiner-Multi-.*-Linux\\.tar\\.(?:gz|xz)", a.get("name", ""), re.I)]
+matches = [a for a in assets if re.fullmatch(r"SRBMiner-Multi-.*-Linux\.tar\.(?:gz|xz)", a.get("name", ""), re.I)]
 if not matches:
-    raise SystemExit("No Linux tar.gz asset was found in the latest SRBMiner-MULTI release.")
+    raise SystemExit("No Linux archive was found in the latest SRBMiner-MULTI release.")
 a = matches[0]
 body = r.get("body") or ""
 md5 = re.search(r"\\b([a-fA-F0-9]{32})\\s+\\*" + re.escape(a["name"]), body)
